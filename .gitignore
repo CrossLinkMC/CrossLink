@@ -1,0 +1,6 @@
+build/
+.deps/
+.xmake/
+bin/
+compile_commands.json
+plugins/

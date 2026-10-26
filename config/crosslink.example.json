@@ -1,0 +1,45 @@
+{
+    "version": 1,
+    "network": {
+        "listenHost": "0.0.0.0",
+        "listenPort": 19132,
+        "maxConnections": 1024,
+        "motd": "CrossLink gateway",
+        "maxPacketBytes": 8388608,
+        "maxPacketsPerSecond": 1024,
+        "workerThreads": 0,
+        "flushReadyPerTick": 512,
+        "maxDeferredPackets": 4096
+    },
+    "control": {
+        "listenHost": "127.0.0.1",
+        "listenPort": 31920,
+        "token": "replace-with-at-least-32-random-characters",
+        "heartbeatSeconds": 15,
+        "requestTimeoutSeconds": 10,
+        "handshakeTimeoutSeconds": 10,
+        "maxLineBytes": 1048576
+    },
+    "lobby": "lobby",
+    "entryServer": "lobby",
+    "servers": [
+        {
+            "id": "lobby",
+            "gameHost": "127.0.0.1",
+            "gamePort": 19133,
+            "agentHost": "127.0.0.1",
+            "agentPort": 0
+        },
+        {
+            "id": "survival",
+            "gameHost": "127.0.0.1",
+            "gamePort": 19134,
+            "agentHost": "127.0.0.1",
+            "agentPort": 0
+        }
+    ],
+    "pluginDir": "plugins",
+    "logLevel": "info",
+    "logFile": "",
+    "transport": "bedrock-raknet"
+}
