@@ -1,8 +1,6 @@
 #include "crosslink/api/proto/packets/ChangeDimensionPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/ChangeDimensionPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -45,19 +43,19 @@ void ChangeDimensionPacket::setLoadingScreenId(std::optional<std::uint32_t> id) 
 Result<> ChangeDimensionPacket::decodeImpl() {
     auto packet = bridge::decode<bp::ChangeDimensionPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mDimension = packet->mDimensionType;
-    mPosition = bridge::fromSculk(packet->mPosition);
-    mRespawn = packet->mRespawn;
-    mLoadingScreenId = packet->mLoadingScreenId;
+    mDimension = packet->dimension_id;
+    mPosition = bridge::fromWire(packet->pos);
+    mRespawn = packet->respawn;
+    mLoadingScreenId = packet->loading_screen_id;
     return {};
 }
 
 Result<> ChangeDimensionPacket::encodeImpl() {
     bp::ChangeDimensionPacket packet;
-    packet.mDimensionType = mDimension;
-    packet.mPosition = bridge::toSculk(mPosition);
-    packet.mRespawn = mRespawn;
-    packet.mLoadingScreenId = mLoadingScreenId;
+    packet.dimension_id = bp::DimensionType{mDimension};
+    packet.pos = bridge::toWire(mPosition);
+    packet.respawn = mRespawn;
+    packet.loading_screen_id = mLoadingScreenId;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

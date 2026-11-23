@@ -1,11 +1,6 @@
 #include "crosslink/api/proto/packets/PlayerInitPackets.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/ClientCacheStatusPacket.hpp>
-#include <sculk/protocol/codec/packet/SetLocalPlayerAsInitializedPacket.hpp>
-#include <sculk/protocol/codec/packet/SetPlayerGameTypePacket.hpp>
-#include <sculk/protocol/codec/packet/SetPlayerInventoryOptionsPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -38,13 +33,13 @@ void SetLocalPlayerAsInitializedPacket::setRuntimeId(std::uint64_t runtimeId) {
 Result<> SetLocalPlayerAsInitializedPacket::decodeImpl() {
     auto packet = bridge::decode<bp::SetLocalPlayerAsInitializedPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mRuntimeId = packet->mRuntimeId;
+    mRuntimeId = packet->player_id;
     return {};
 }
 
 Result<> SetLocalPlayerAsInitializedPacket::encodeImpl() {
     bp::SetLocalPlayerAsInitializedPacket packet;
-    packet.mRuntimeId = mRuntimeId;
+    packet.player_id = bp::ActorRuntimeID{mRuntimeId};
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }
@@ -63,13 +58,13 @@ void ClientCacheStatusPacket::setCacheSupported(bool cacheSupported) {
 Result<> ClientCacheStatusPacket::decodeImpl() {
     auto packet = bridge::decode<bp::ClientCacheStatusPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mCacheSupported = packet->mIsCacheSupport;
+    mCacheSupported = packet->enabled;
     return {};
 }
 
 Result<> ClientCacheStatusPacket::encodeImpl() {
     bp::ClientCacheStatusPacket packet;
-    packet.mIsCacheSupport = mCacheSupported;
+    packet.enabled = mCacheSupported;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }
@@ -88,13 +83,13 @@ void SetPlayerGameTypePacket::setGameType(GameType gameType) {
 Result<> SetPlayerGameTypePacket::decodeImpl() {
     auto packet = bridge::decode<bp::SetPlayerGameTypePacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mGameType = bridge::fromSculk(packet->mGameType);
+    mGameType = bridge::fromWire(packet->player_game_type);
     return {};
 }
 
 Result<> SetPlayerGameTypePacket::encodeImpl() {
     bp::SetPlayerGameTypePacket packet;
-    packet.mGameType = bridge::toSculk(mGameType);
+    packet.player_game_type = bridge::toWire(mGameType);
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }
@@ -137,19 +132,20 @@ std::int32_t SetPlayerInventoryOptionsPacket::craftLayout() const { return mCraf
 Result<> SetPlayerInventoryOptionsPacket::decodeImpl() {
     auto packet = bridge::decode<bp::SetPlayerInventoryOptionsPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mLeftTab = enumToInt(packet->mLeftInventoryTab);
-    mRightTab = enumToInt(packet->mRightInventoryTab);
-    mLayout = enumToInt(packet->mLayoutInventory);
-    mCraftLayout = enumToInt(packet->mLayoutCraft);
+    auto const& options = packet->inventory_options;
+    mLeftTab = enumToInt(options.left_inventory_tab);
+    mRightTab = enumToInt(options.right_inventory_tab);
+    mLayout = enumToInt(options.layout_inv);
+    mCraftLayout = enumToInt(options.layout_craft);
     return {};
 }
 
 Result<> SetPlayerInventoryOptionsPacket::encodeImpl() {
     bp::SetPlayerInventoryOptionsPacket packet;
-    packet.mLeftInventoryTab = intToEnum<bp::InventoryLeftTabIndex>(mLeftTab);
-    packet.mRightInventoryTab = intToEnum<bp::InventoryRightTabIndex>(mRightTab);
-    packet.mLayoutInventory = intToEnum<bp::InventoryLayout>(mLayout);
-    packet.mLayoutCraft = intToEnum<bp::InventoryLayout>(mCraftLayout);
+    packet.inventory_options.left_inventory_tab = intToEnum<bp::InventoryLeftTabIndex>(mLeftTab);
+    packet.inventory_options.right_inventory_tab = intToEnum<bp::InventoryRightTabIndex>(mRightTab);
+    packet.inventory_options.layout_inv = intToEnum<bp::InventoryLayout>(mLayout);
+    packet.inventory_options.layout_craft = intToEnum<bp::InventoryLayout>(mCraftLayout);
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

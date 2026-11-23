@@ -1,10 +1,6 @@
 #include "crosslink/api/proto/packets/InventoryTransactionPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/inventory/transaction/InventoryTransactionType.hpp>
-#include <sculk/protocol/codec/inventory/transaction/ItemUseOnActorInventoryTransaction.hpp>
-#include <sculk/protocol/codec/packet/InventoryTransactionPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 #include <variant>
 
@@ -20,13 +16,12 @@ std::optional<std::uint64_t> InventoryTransactionPacket::attackTargetRuntimeId()
 
     auto packet = bridge::decode<bp::InventoryTransactionPacket>(payload());
     if (!packet) return std::nullopt;
-    if (packet->mTransaction.type() != bp::InventoryTransactionType::ItemUseOnActorInventoryTransaction) return std::nullopt;
 
-    const auto* transaction = std::get_if<bp::ItemUseOnActorInventoryTransaction>(&packet->mTransaction.mValue);
+    const auto* transaction = std::get_if<bp::ItemUseOnActorInventoryTransaction>(&packet->transaction);
     if (transaction == nullptr) return std::nullopt;
-    if (transaction->mActionType != bp::ItemUseOnActorInventoryTransaction::ActionType::Attack) return std::nullopt;
+    if (transaction->action_type != bp::ItemUseOnActorInventoryTransaction::ActionType::Attack) return std::nullopt;
 
-    mAttackTargetRuntimeId = transaction->mRuntimeId;
+    mAttackTargetRuntimeId = transaction->runtime_id;
     mDecoded = true;
     return mAttackTargetRuntimeId;
 }

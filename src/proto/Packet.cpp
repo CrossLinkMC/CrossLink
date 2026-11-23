@@ -1,6 +1,6 @@
 #include "crosslink/api/proto/Packet.hpp"
 
-#include "proto/SculkBridge.hpp"
+#include "proto/EndstoneBridge.hpp"
 
 #include <magic_enum/magic_enum.hpp>
 
@@ -11,16 +11,9 @@
 
 namespace crosslink::proto {
 
-Result<PacketHeader> readPacketHeader(ByteSpan bytes) {
-    const auto header = bridge::readSculkHeader(bytes);
-    if (!header) return std::unexpected(header.error());
-    return bridge::fromSculk(*header);
-}
+Result<PacketHeader> readPacketHeader(ByteSpan bytes) { return bridge::readHeader(bytes); }
 
-void writePacketHeader(Bytes& out, PacketHeader const& header) {
-    bridge::bp::BinaryStream stream{out};
-    bridge::bp::MinecraftPackets::writePacketHeader(stream, bridge::toSculk(header));
-}
+void writePacketHeader(Bytes& out, PacketHeader const& header) { bridge::writeHeader(out, header); }
 
 std::string_view packetName(PacketId id) noexcept {
     const auto name = magic_enum::enum_name(id);

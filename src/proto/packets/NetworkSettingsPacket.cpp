@@ -1,8 +1,6 @@
 #include "crosslink/api/proto/packets/NetworkSettingsPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/NetworkSettingsPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -33,21 +31,21 @@ void NetworkSettingsPacket::setCompression(net::Compression algorithm, std::uint
 Result<> NetworkSettingsPacket::decodeImpl() {
     auto packet = bridge::decode<bp::NetworkSettingsPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mCompressionThreshold = packet->mCompressionThreshold;
-    mCompressionAlgorithm = bridge::fromSculk(packet->mCompressionAlgorithm);
-    mClientThrottleEnabled = packet->mClientThrottleEnabled;
-    mClientThrottleThreshold = packet->mClientThrottleThreshold;
-    mClientThrottleScalar = packet->mClientThrottleScalar;
+    mCompressionThreshold = packet->compression_threshold;
+    mCompressionAlgorithm = bridge::fromWire(packet->compression_algorithm);
+    mClientThrottleEnabled = packet->client_throttle_enabled;
+    mClientThrottleThreshold = packet->client_throttle_threshold;
+    mClientThrottleScalar = packet->client_throttle_scalar;
     return {};
 }
 
 Result<> NetworkSettingsPacket::encodeImpl() {
     bp::NetworkSettingsPacket packet;
-    packet.mCompressionThreshold = mCompressionThreshold;
-    packet.mCompressionAlgorithm = bridge::toSculk(mCompressionAlgorithm);
-    packet.mClientThrottleEnabled = mClientThrottleEnabled;
-    packet.mClientThrottleThreshold = mClientThrottleThreshold;
-    packet.mClientThrottleScalar = mClientThrottleScalar;
+    packet.compression_threshold = mCompressionThreshold;
+    packet.compression_algorithm = bridge::toWire(mCompressionAlgorithm);
+    packet.client_throttle_enabled = mClientThrottleEnabled;
+    packet.client_throttle_threshold = mClientThrottleThreshold;
+    packet.client_throttle_scalar = mClientThrottleScalar;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

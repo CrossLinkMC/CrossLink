@@ -42,6 +42,14 @@ struct ResignRequest {
     std::optional<std::string> deviceModelOverride;
 };
 
+/// Short, stable fingerprint of a PEM/base64 public key, for log comparisons only.
+[[nodiscard]] CROSSLINK_API std::string keyFingerprint(std::string_view key);
+
+/// One-line summary of which public keys a connection request actually carries.
+/// BDS derives the backend session key from one of them, so a mismatch between
+/// the re-signed token and a leftover legacy chain shows up here and nowhere else.
+[[nodiscard]] CROSSLINK_API std::string describeAuthentication(std::string_view rawConnectionRequest);
+
 [[nodiscard]] CROSSLINK_API Result<std::string> resign(ResignRequest const& request);
 
 } // namespace crosslink::proto::auth

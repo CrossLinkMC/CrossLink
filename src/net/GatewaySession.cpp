@@ -3,10 +3,12 @@
 #include "crosslink/api/Events.hpp"
 #include "crosslink/api/Gateway.hpp"
 #include "crosslink/api/net/ServerRegistry.hpp"
+#include "crosslink/api/proto/ConnectionRequest.hpp"
 #include "crosslink/api/proto/Crypto.hpp"
 #include "crosslink/api/proto/packets/AllPackets.hpp"
 
 #include <format>
+#include <iterator>
 #include <utility>
 
 namespace crosslink::net {
@@ -276,8 +278,36 @@ Result<> GatewaySession::sendToBackend(ByteSpan packet, bool immediate) {
         std::lock_guard lock{mMutex};
         backend = mCurrent;
     }
-    if (!backend || !backend->connected()) return std::unexpected(Error{"no backend is attached"});
+    if (!backend || !backend->connected()) {
+        // The leg exists but is still dialing. Hold the packet rather than dropping
+        // it: flushPendingBackend() releases the queue in order once it connects.
+        std::lock_guard lock{mMutex};
+        if (mPendingBackend.size() >= maxPendingBackendPackets) {
+            return std::unexpected(Error{"no backend is attached and the pending queue is full"});
+        }
+        mPendingBackend.emplace_back(packet.begin(), packet.end());
+        return {};
+    }
     return backend->send(packet, immediate);
+}
+
+void GatewaySession::flushPendingBackend() {
+    std::deque<Bytes> pending;
+    ConnectionPtr backend;
+    {
+        std::lock_guard lock{mMutex};
+        backend = mCurrent;
+        pending.swap(mPendingBackend);
+    }
+    if (!backend || pending.empty()) return;
+
+    mGateway.logger().debug("session {}: flushing {} queued packet(s) to '{}'", mId.str(), pending.size(), backend->label());
+    for (auto const& packet : pending) {
+        if (auto sent = backend->send(ByteSpan{packet}, false); !sent) {
+            mGateway.logger().warn("session {}: lost the backend while flushing: {}", mId.str(), sent.error().message);
+            return;
+        }
+    }
 }
 
 void GatewaySession::disconnectClient(std::string_view reason) noexcept {
@@ -328,6 +358,19 @@ Result<> GatewaySession::terminateBackendHandshake(
     auto backendKey = proto::crypto::deriveSessionKey(mKeyPair.privateKeyPem, token->remotePublicKey, ByteSpan{token->salt});
     if (!backendKey) return std::unexpected(backendKey.error());
 
+    // A salt mis-decode changes the backend session key and both ends then drop
+    // each other's packets in silence, so the decoded salt is worth seeing.
+    std::string saltHex{};
+    for (std::size_t i = 0; i < token->salt.size() && i < 16; ++i) {
+        std::format_to(std::back_inserter(saltHex), "{:02x}", static_cast<unsigned>(token->salt[i]));
+    }
+    mGateway.logger().debug(
+        "session {}: backend salt {} byte(s) [{}]",
+        mId.str(),
+        token->salt.size(),
+        saltHex
+    );
+
     Bytes frontendKey;
     proto::crypto::HandshakeToken frontendToken;
     if (issueFrontendHandshake) {
@@ -363,7 +406,19 @@ Result<> GatewaySession::terminateBackendHandshake(
         proto::PacketHeader{proto::PacketId::ClientToServerHandshake}
     };
     if (auto encoded = acknowledgement.encode(); !encoded) return encoded;
-    return backend->send(ByteSpan{acknowledgement.bytes()}, true);
+    mGateway.logger().info(
+        "session {}: terminated the backend encryption handshake (backend key {}, gateway key {}, ack {} bytes){}",
+        mId.str(),
+        proto::auth::keyFingerprint(token->remotePublicKey),
+        proto::auth::keyFingerprint(mKeyPair.publicKeyPem),
+        acknowledgement.bytes().size(),
+        issueFrontendHandshake ? " and issued the client handshake" : ""
+    );
+    auto acked = backend->send(ByteSpan{acknowledgement.bytes()}, true);
+    if (!acked) {
+        mGateway.logger().error("session {}: the backend refused the handshake acknowledgement: {}", mId.str(), acked.error().message);
+    }
+    return acked;
 }
 
 // ---- routing -----------------------------------------------------------
@@ -377,6 +432,10 @@ void GatewaySession::handleClientPacket(Bytes& raw) {
         return;
     }
     auto& packet = **wrapped;
+
+    if (mLoggedClientPackets++ < 24) {
+        mGateway.logger().debug("session {}: client -> {} ({} bytes)", mId.str(), packet.name(), packet.bytes().size());
+    }
 
     switch (idOf(packet)) {
     case proto::PacketId::Login:
@@ -425,8 +484,26 @@ void GatewaySession::handleLoginOutbound(proto::Packet& packet, ServerId const& 
     LoginOutboundEvent outbound{std::static_pointer_cast<PlayerSession>(shared_from_this()), server, *login};
     mGateway.events().emit(outbound);
 
+    const std::string originalRequest = login->rawConnectionRequest();
     if (auto resigned = login->resign(mKeyPair, outbound.deviceIdOverride, outbound.deviceModelOverride); !resigned) {
         mGateway.logger().error("session {}: cannot re-sign Login for '{}': {}", mId.str(), server.str(), resigned.error().message);
+    } else {
+        mGateway.logger().info(
+            "session {}: re-signed Login for '{}' ({} bytes, carriers {})",
+            mId.str(),
+            server.str(),
+            login->rawConnectionRequest().size(),
+            outbound.deviceIdOverride ? "attached" : "none"
+        );
+        // BDS takes the session ECDH key from one of these fields; whichever one
+        // still holds the original client key is the one that breaks the handshake.
+        mGateway.logger().info(
+            "session {}: gateway key={} | in: {} | out: {}",
+            mId.str(),
+            proto::auth::keyFingerprint(mKeyPair.publicKeyPem),
+            proto::auth::describeAuthentication(originalRequest),
+            proto::auth::describeAuthentication(login->rawConnectionRequest())
+        );
     }
 }
 
@@ -439,6 +516,16 @@ void GatewaySession::handleBackendPacket(ConnectionPtr const& backend, ServerId 
         return;
     }
     auto& packet = **wrapped;
+
+    if (mLoggedBackendPackets++ < 24) {
+        mGateway.logger().debug(
+            "session {}: {} <- {} ({} bytes)",
+            mId.str(),
+            server.str(),
+            packet.name(),
+            packet.bytes().size()
+        );
+    }
 
     const bool currentBackend = [&] {
         std::lock_guard lock{mMutex};
@@ -489,6 +576,12 @@ bool GatewaySession::handleBackendNetworkSettings(ConnectionPtr const& backend, 
     }
     if (mClient) mClient->setCompression(settings->compressionAlgorithm(), settings->compressionThreshold());
     mFrontendReady = true;
+    mGateway.logger().info(
+        "session {}: relayed NetworkSettings to the client (compression {}, threshold {})",
+        mId.str(),
+        static_cast<int>(settings->compressionAlgorithm()),
+        settings->compressionThreshold()
+    );
     mCondition.notify_all();
     return true;
 }
@@ -555,9 +648,11 @@ void GatewaySession::routePacket(
 }
 
 void GatewaySession::handleBackendConnected(ConnectionPtr const& backend, ServerId const& server) {
+    bool isCurrent = false;
     {
         std::lock_guard lock{mMutex};
         if (auto* leg = legFor(backend)) leg->connected = true;
+        isCurrent = mCurrent == backend;
     }
     mCondition.notify_all();
     mGateway.logger().info("session {}: backend '{}' connected at {}", mId.str(), server.str(), backend->remote().toString());
@@ -567,6 +662,10 @@ void GatewaySession::handleBackendConnected(ConnectionPtr const& backend, Server
     event.backend = backend;
     event.server = server;
     mGateway.events().emit(event);
+
+    // Only the current leg may receive the queued login material; a prewarming leg
+    // is driven explicitly by the transfer plugin.
+    if (isCurrent) flushPendingBackend();
 }
 
 void GatewaySession::handleBackendClosed(ConnectionPtr const& backend, ServerId const& server, std::string reason) {
@@ -622,6 +721,7 @@ void GatewaySession::emitClosed(std::string reason) {
         mCurrentServer = ServerId{};
         mDeferredToClient.clear();
         mDeferredToBackend.clear();
+        mPendingBackend.clear();
     }
     mPipeline.clear();
     for (auto& leg : legs) {

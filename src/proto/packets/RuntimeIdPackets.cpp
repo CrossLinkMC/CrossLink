@@ -1,21 +1,9 @@
 #include "crosslink/api/proto/packets/RuntimeIdPackets.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/ActorEventPacket.hpp>
-#include <sculk/protocol/codec/packet/AnimatePacket.hpp>
-#include <sculk/protocol/codec/packet/InteractPacket.hpp>
-#include <sculk/protocol/codec/packet/MobArmorEquipmentPacket.hpp>
-#include <sculk/protocol/codec/packet/MobEffectPacket.hpp>
-#include <sculk/protocol/codec/packet/MobEquipmentPacket.hpp>
-#include <sculk/protocol/codec/packet/MovePlayerPacket.hpp>
-#include <sculk/protocol/codec/packet/SetActorDataPacket.hpp>
-#include <sculk/protocol/codec/packet/SetActorMotionPacket.hpp>
-#include <sculk/protocol/codec/packet/UpdateAttributesPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 #include <algorithm>
 #include <functional>
-#include <memory>
 #include <unordered_map>
 #include <vector>
 
@@ -24,25 +12,27 @@ namespace {
 
 namespace bp = bridge::bp;
 
-using Getter = std::function<std::uint64_t(bp::IPacket const&)>;
-using Setter = std::function<void(bp::IPacket&, std::uint64_t)>;
-
-/// One row of the group table: how to reach the runtime id field of a packet.
+/// One row of the group table: how to read a packet body's runtime id and how to
+/// rewrite it. Both directions decode the full body, so untouched fields survive.
 struct Accessor {
-    Getter get;
-    Setter set;
+    std::function<Result<std::uint64_t>(ByteSpan)> read;
+    std::function<Result<Bytes>(PacketHeader const&, ByteSpan, std::uint64_t)> rewrite;
 };
 
-template <typename T>
-Accessor makeAccessor(std::uint64_t T::*field) {
+template <typename T, typename Field>
+Accessor makeAccessor(Field T::* field) {
     return Accessor{
-        .get =
-            [field](bp::IPacket const& packet) {
-                return static_cast<T const&>(packet).*field;
+        .read =
+            [field](ByteSpan payload) -> Result<std::uint64_t> {
+                auto packet = bridge::decode<T>(payload);
+                if (!packet) return std::unexpected(packet.error());
+                return static_cast<std::uint64_t>((*packet).*field);
             },
-        .set =
-            [field](bp::IPacket& packet, std::uint64_t value) {
-                static_cast<T&>(packet).*field = value;
+        .rewrite =
+            [field](PacketHeader const& header, ByteSpan payload, std::uint64_t runtimeId) -> Result<Bytes> {
+                return bridge::modify<T>(header, payload, [&](T& packet) {
+                    packet.*field = Field{runtimeId};
+                });
             },
     };
 }
@@ -50,19 +40,19 @@ Accessor makeAccessor(std::uint64_t T::*field) {
 /// Adding a packet to the runtime-id group is one line here and nothing else.
 std::unordered_map<std::uint16_t, Accessor> const& accessorTable() {
     static const std::unordered_map<std::uint16_t, Accessor> table = {
-        {packetIdValue(PacketId::ActorEvent), makeAccessor<bp::ActorEventPacket>(&bp::ActorEventPacket::mRuntimeId)},
-        {packetIdValue(PacketId::Animate), makeAccessor<bp::AnimatePacket>(&bp::AnimatePacket::mActorRuntimeId)},
-        {packetIdValue(PacketId::Interact), makeAccessor<bp::InteractPacket>(&bp::InteractPacket::mActorRuntimeId)},
+        {packetIdValue(PacketId::ActorEvent), makeAccessor<bp::ActorEventPacket>(&bp::ActorEventPacket::runtime_id)},
+        {packetIdValue(PacketId::Animate), makeAccessor<bp::AnimatePacket>(&bp::AnimatePacket::runtime_id)},
+        {packetIdValue(PacketId::Interact), makeAccessor<bp::InteractPacket>(&bp::InteractPacket::target_id)},
         {packetIdValue(PacketId::MobArmorEquipment),
-         makeAccessor<bp::MobArmorEquipmentPacket>(&bp::MobArmorEquipmentPacket::mRuntimeId)},
-        {packetIdValue(PacketId::MobEffect), makeAccessor<bp::MobEffectPacket>(&bp::MobEffectPacket::mActorRuntimeId)},
-        {packetIdValue(PacketId::MobEquipment), makeAccessor<bp::MobEquipmentPacket>(&bp::MobEquipmentPacket::mRuntimeId)},
-        {packetIdValue(PacketId::MovePlayer), makeAccessor<bp::MovePlayerPacket>(&bp::MovePlayerPacket::mActorRuntimeId)},
-        {packetIdValue(PacketId::SetActorData), makeAccessor<bp::SetActorDataPacket>(&bp::SetActorDataPacket::mActorRuntimeId)},
+         makeAccessor<bp::MobArmorEquipmentPacket>(&bp::MobArmorEquipmentPacket::runtime_id)},
+        {packetIdValue(PacketId::MobEffect), makeAccessor<bp::MobEffectPacket>(&bp::MobEffectPacket::runtime_id)},
+        {packetIdValue(PacketId::MobEquipment), makeAccessor<bp::MobEquipmentPacket>(&bp::MobEquipmentPacket::runtime_id)},
+        {packetIdValue(PacketId::MovePlayer), makeAccessor<bp::MovePlayerPacket>(&bp::MovePlayerPacket::player_id)},
+        {packetIdValue(PacketId::SetActorData), makeAccessor<bp::SetActorDataPacket>(&bp::SetActorDataPacket::id)},
         {packetIdValue(PacketId::SetActorMotion),
-         makeAccessor<bp::SetActorMotionPacket>(&bp::SetActorMotionPacket::mActorRuntimeId)},
+         makeAccessor<bp::SetActorMotionPacket>(&bp::SetActorMotionPacket::runtime_id)},
         {packetIdValue(PacketId::UpdateAttributes),
-         makeAccessor<bp::UpdateAttributesPacket>(&bp::UpdateAttributesPacket::mActorRuntimeId)},
+         makeAccessor<bp::UpdateAttributesPacket>(&bp::UpdateAttributesPacket::runtime_id)},
     };
     return table;
 }
@@ -71,13 +61,6 @@ Accessor const* accessorFor(PacketId id) {
     auto const& table = accessorTable();
     const auto found = table.find(packetIdValue(id));
     return found == table.end() ? nullptr : &found->second;
-}
-
-/// Creates the sculk packet instance that matches an id in the group.
-Result<std::unique_ptr<bp::IPacket>> createSculkPacket(PacketId id) {
-    auto packet = bp::MinecraftPackets::createPacket(bridge::toSculk(id));
-    if (!packet) return std::unexpected(Error{std::string{packet.error().message()}});
-    return std::move(*packet);
 }
 
 } // namespace
@@ -106,14 +89,9 @@ Result<std::uint64_t> RuntimeIdPacket::runtimeId() {
     const auto* accessor = accessorFor(id());
     if (accessor == nullptr) return std::unexpected(Error{"this packet does not carry a runtime id"});
 
-    auto packet = createSculkPacket(id());
-    if (!packet) return std::unexpected(packet.error());
-
-    bp::ReadOnlyBinaryStream stream{payload()};
-    if (const auto status = (*packet)->read(stream); !status) {
-        return std::unexpected(Error{std::string{status.error().message()}});
-    }
-    mRuntimeId = accessor->get(**packet);
+    auto value = accessor->read(payload());
+    if (!value) return std::unexpected(value.error());
+    mRuntimeId = *value;
     mHasRuntimeId = true;
     return mRuntimeId;
 }
@@ -122,15 +100,13 @@ bool RuntimeIdPacket::setRuntimeId(std::uint64_t runtimeId) {
     const auto* accessor = accessorFor(id());
     if (accessor == nullptr) return false;
 
-    auto packet = createSculkPacket(id());
-    if (!packet) return false;
+    const auto current = this->runtimeId();
+    if (!current) return false;
+    if (*current == runtimeId) return false;
 
-    bp::ReadOnlyBinaryStream stream{payload()};
-    if (const auto status = (*packet)->read(stream); !status) return false;
-    if (accessor->get(**packet) == runtimeId) return false;
-
-    accessor->set(**packet, runtimeId);
-    setSerialized(bridge::serialize(header(), **packet), bridge::serializedHeaderSize(header()));
+    auto rewritten = accessor->rewrite(header(), payload(), runtimeId);
+    if (!rewritten) return false;
+    setSerialized(std::move(*rewritten), bridge::serializedHeaderSize(header()));
     mRuntimeId = runtimeId;
     mHasRuntimeId = true;
     mDecoded = true;

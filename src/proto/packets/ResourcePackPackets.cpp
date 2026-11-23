@@ -1,13 +1,15 @@
 #include "crosslink/api/proto/packets/ResourcePackPackets.hpp"
 
-#include "proto/SculkBridge.hpp"
+#include "proto/EndstoneBridge.hpp"
 
-#include <sculk/protocol/codec/packet/ResourcePackClientResponsePacket.hpp>
+#include <variant>
 
 namespace crosslink::proto {
 namespace {
 
 namespace bp = bridge::bp;
+
+using WirePacket = bp::ResourcePackClientResponsePacket;
 
 } // namespace
 
@@ -21,15 +23,40 @@ void ResourcePackClientResponsePacket::setResponse(ResourcePackResponse response
 }
 
 Result<> ResourcePackClientResponsePacket::decodeImpl() {
-    auto packet = bridge::decode<bp::ResourcePackClientResponsePacket>(payload());
+    auto packet = bridge::decode<WirePacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mResponse = static_cast<ResourcePackResponse>(packet->mResponse);
+
+    // The answer is a variant of one tag type per state, so the alternative in
+    // play is the state.
+    if (const auto* downloading = std::get_if<WirePacket::Downloading>(&packet->response)) {
+        mResponse         = ResourcePackResponse::SendPacks;
+        mDownloadingPacks = downloading->downloading_packs;
+    } else if (std::holds_alternative<WirePacket::Cancel>(packet->response)) {
+        mResponse = ResourcePackResponse::Refused;
+    } else if (std::holds_alternative<WirePacket::DownloadingFinished>(packet->response)) {
+        mResponse = ResourcePackResponse::HaveAllPacks;
+    } else {
+        mResponse = ResourcePackResponse::Completed;
+    }
     return {};
 }
 
 Result<> ResourcePackClientResponsePacket::encodeImpl() {
-    bp::ResourcePackClientResponsePacket packet;
-    packet.mResponse = static_cast<std::uint8_t>(mResponse);
+    WirePacket packet;
+    switch (mResponse) {
+    case ResourcePackResponse::Refused:
+        packet.response = WirePacket::Cancel{};
+        break;
+    case ResourcePackResponse::SendPacks:
+        packet.response = WirePacket::Downloading{{mDownloadingPacks}};
+        break;
+    case ResourcePackResponse::HaveAllPacks:
+        packet.response = WirePacket::DownloadingFinished{};
+        break;
+    case ResourcePackResponse::Completed:
+        packet.response = WirePacket::ResourcePackStackFinished{};
+        break;
+    }
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

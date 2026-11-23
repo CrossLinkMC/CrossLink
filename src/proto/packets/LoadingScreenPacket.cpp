@@ -1,18 +1,16 @@
 #include "crosslink/api/proto/packets/LoadingScreenPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/ServerboundLoadingScreenPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
 
 namespace bp = bridge::bp;
-using SculkType = bp::ServerboundLoadingScreenPacket::Type;
+using WireType = bp::ServerboundLoadingScreenPacketType;
 
-SculkType toSculk(LoadingScreenType type) noexcept { return static_cast<SculkType>(static_cast<std::int8_t>(type)); }
+WireType toWire(LoadingScreenType type) noexcept { return static_cast<WireType>(static_cast<std::int8_t>(type)); }
 
-LoadingScreenType fromSculk(SculkType type) noexcept { return static_cast<LoadingScreenType>(static_cast<std::int8_t>(type)); }
+LoadingScreenType fromWire(WireType type) noexcept { return static_cast<LoadingScreenType>(static_cast<std::int8_t>(type)); }
 
 } // namespace
 
@@ -36,15 +34,15 @@ void LoadingScreenPacket::setLoadingScreenId(std::optional<std::uint32_t> id) {
 Result<> LoadingScreenPacket::decodeImpl() {
     auto packet = bridge::decode<bp::ServerboundLoadingScreenPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mType = fromSculk(packet->mType);
-    mLoadingScreenId = packet->mLoadingScreenId;
+    mType = fromWire(packet->loading_screen_packet_type);
+    mLoadingScreenId = packet->loading_screen_id;
     return {};
 }
 
 Result<> LoadingScreenPacket::encodeImpl() {
     bp::ServerboundLoadingScreenPacket packet;
-    packet.mType = toSculk(mType);
-    packet.mLoadingScreenId = mLoadingScreenId;
+    packet.loading_screen_packet_type = toWire(mType);
+    packet.loading_screen_id = mLoadingScreenId;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

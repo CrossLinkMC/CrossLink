@@ -15,16 +15,16 @@ option("build_plugins")
     set_description("Build the bundled CrossLink plugins")
 option_end()
 
--- The advertised version must match the BedrockProtocol checkout pinned in
--- xmake/deps.lua. CrossLink never rewrites a dependency's sources.
+-- The advertised version must match the codecs vendored in
+-- third_party/bedrock-protocol. CrossLink never rewrites a dependency's sources.
 option("protocol_version")
-    set_default(1001)
+    set_default(2225)
     set_showmenu(true)
     set_description("Bedrock network protocol version")
 option_end()
 
 option("game_version")
-    set_default("26.30")
+    set_default("1.26.60")
     set_showmenu(true)
     set_description("Bedrock game version advertised in the MOTD")
 option_end()
@@ -68,6 +68,22 @@ target("raknet")
         target:add("files", path.join(root, "Source/*.cpp"))
         target:add("sysincludedirs", path.join(root, "Source"), {public = true})
     end)
+target_end()
+
+-- Bedrock packet codecs. Vendored as pre-generated C++ (third_party/bedrock-protocol/
+-- VENDOR.md), so unlike a checkout of the upstream repo this needs no Python at build
+-- time. STL-only: no xrepo packages.
+target("bedrock_codec")
+    set_kind("static")
+    set_group("deps")
+    set_languages("c++23")
+    set_warnings(nil)
+    if is_plat("windows") then
+        add_cxflags("/utf-8", "/bigobj", {force = true})
+    end
+    add_sysincludedirs("third_party/bedrock-protocol/include", {public = true})
+    add_sysincludedirs("third_party/bedrock-protocol/generated/include", {public = true})
+    add_files("third_party/bedrock-protocol/generated/include/bedrock/protocol/*.cpp")
 target_end()
 
 target("bedrock_protocol")
@@ -141,14 +157,14 @@ target("crosslink_core")
     add_includedirs("include", {public = true})
     add_includedirs("src")
     add_headerfiles("include/(crosslink/**.hpp)")
-    add_deps("bedrock_protocol")
+    add_deps("bedrock_codec", "bedrock_protocol")
     add_packages("nlohmann_json", "fmt", "magic_enum")
     add_defines("CROSSLINK_BUILDING_CORE=1")
     on_load(function (target)
         crosslink_target(target)
         -- Resolved here because get_config() is only reliable once options are set.
-        local protocol = tostring(get_config("protocol_version") or 1001)
-        local game = tostring(get_config("game_version") or "26.30")
+        local protocol = tostring(get_config("protocol_version") or 2225)
+        local game = tostring(get_config("game_version") or "1.26.60")
         local version = tostring(get_config("version") or "0.1.0")
         target:add("defines", "CROSSLINK_PROTOCOL_VERSION=" .. protocol, {public = true})
         target:add("defines", "CROSSLINK_GAME_VERSION=\"" .. game .. "\"", {public = true})

@@ -1,8 +1,6 @@
 #include "crosslink/api/proto/packets/StartGamePacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/StartGamePacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -31,12 +29,12 @@ Result<> StartGamePacket::decodeImpl() {
     auto packet = bridge::decode<bp::StartGamePacket>(payload());
     if (!packet) return std::unexpected(packet.error());
 
-    mActorUniqueId = packet->mActorUniqueId;
-    mRuntimeId = packet->mActorRuntimeId;
-    mGameType = bridge::fromSculk(packet->mGameType);
-    mLevelGameType = bridge::fromSculk(packet->mLevelSettings.mGameType);
-    mDimension = packet->mLevelSettings.mSpawnSettings.mDimension;
-    mPosition = bridge::fromSculk(packet->mPosition);
+    mActorUniqueId = packet->entity_id;
+    mRuntimeId = packet->runtime_id;
+    mGameType = bridge::fromWire(packet->entity_game_type);
+    mLevelGameType = bridge::fromWire(packet->settings.game_type);
+    mDimension = packet->settings.spawn_settings.dimension;
+    mPosition = bridge::fromWire(packet->pos);
     return {};
 }
 

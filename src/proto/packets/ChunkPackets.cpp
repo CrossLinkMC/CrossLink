@@ -1,10 +1,6 @@
 #include "crosslink/api/proto/packets/ChunkPackets.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/LevelChunkPacket.hpp>
-#include <sculk/protocol/codec/packet/SubChunkPacket.hpp>
-#include <sculk/protocol/codec/packet/SubChunkRequestPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -26,10 +22,12 @@ bool LevelChunkPacket::clientNeedsToRequestSubChunks() const { return mClientNee
 Result<> LevelChunkPacket::decodeImpl() {
     auto packet = bridge::decode<bp::LevelChunkPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mDimension = packet->mDimensionId;
-    mSubChunkCount = packet->mSubChunksCount;
-    mCacheEnabled = packet->mCacheBlobs.has_value();
-    mClientNeedsToRequestSubChunks = packet->mClientNeedsToRequestSubchunks;
+    mDimension = packet->dimension_id;
+    mSubChunkCount = packet->sub_chunks_count;
+    mCacheEnabled = packet->cache_enabled;
+    // The limit travels behind a presence flag; without it the client has to
+    // fetch the remaining sub chunks with SubChunkRequestPacket.
+    mClientNeedsToRequestSubChunks = !packet->client_request_sub_chunk_limit.has_value();
     return {};
 }
 
@@ -44,9 +42,9 @@ std::size_t SubChunkPacket::entryCount() const { return mEntryCount; }
 Result<> SubChunkPacket::decodeImpl() {
     auto packet = bridge::decode<bp::SubChunkPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mDimension = packet->mDimensionType;
-    mCacheEnabled = packet->mCacheEnabled;
-    mEntryCount = packet->mSubChunkData.size();
+    mDimension = packet->dimension_type;
+    mCacheEnabled = packet->cache_enabled;
+    mEntryCount = packet->sub_chunk_data.size();
     return {};
 }
 
@@ -62,14 +60,14 @@ void SubChunkRequestPacket::setDimension(std::int32_t dimension) {
 Result<> SubChunkRequestPacket::decodeImpl() {
     auto packet = bridge::decode<bp::SubChunkRequestPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mDimension = packet->mDimensionType;
+    mDimension = packet->dimension_type;
     return {};
 }
 
 Result<> SubChunkRequestPacket::encodeImpl() {
     // Read-modify-write keeps the requested offsets intact.
     auto rewritten = bridge::modify<bp::SubChunkRequestPacket>(header(), payload(), [this](bp::SubChunkRequestPacket& packet) {
-        packet.mDimensionType = mDimension;
+        packet.dimension_type = bp::DimensionType{mDimension};
     });
     if (!rewritten) return std::unexpected(rewritten.error());
     setSerialized(std::move(*rewritten), bridge::serializedHeaderSize(header()));

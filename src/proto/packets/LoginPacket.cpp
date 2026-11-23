@@ -1,20 +1,11 @@
 #include "crosslink/api/proto/packets/LoginPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/auth/ConnectionRequest.hpp>
-#include <sculk/protocol/codec/packet/LoginPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
 
 namespace bp = bridge::bp;
-
-Result<bp::ConnectionRequest> parseRequest(std::string const& raw) {
-    auto request = bp::ConnectionRequest::fromString(raw);
-    if (!request) return std::unexpected(bridge::convertError(request));
-    return std::move(*request);
-}
 
 } // namespace
 
@@ -51,15 +42,15 @@ Result<> LoginPacket::resign(
 Result<> LoginPacket::decodeImpl() {
     auto packet = bridge::decode<bp::LoginPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mNetworkVersion = packet->mNetworkVersion;
-    mRawConnectionRequest = std::move(packet->mRawConnectionRequest);
+    mNetworkVersion       = packet->client_network_version;
+    mRawConnectionRequest = std::move(packet->connection_request);
     return {};
 }
 
 Result<> LoginPacket::encodeImpl() {
     bp::LoginPacket packet;
-    packet.mNetworkVersion = mNetworkVersion;
-    packet.mRawConnectionRequest = mRawConnectionRequest;
+    packet.client_network_version = mNetworkVersion;
+    packet.connection_request     = mRawConnectionRequest;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

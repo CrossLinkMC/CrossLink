@@ -3,7 +3,9 @@
 #include "crosslink/api/proto/TypedPacket.hpp"
 
 #include <cstdint>
+#include <string>
 #include <string_view>
+#include <vector>
 
 namespace crosslink::proto {
 
@@ -37,6 +39,9 @@ protected:
 
 private:
     ResourcePackResponse mResponse{ResourcePackResponse::Completed};
+    /// The 2225 codec keeps the requested pack ids inside the SendPacks answer,
+    /// so they are carried here to survive a re-encode.
+    std::vector<std::string> mDownloadingPacks;
 };
 
 } // namespace crosslink::proto

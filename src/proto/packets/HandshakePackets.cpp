@@ -1,9 +1,6 @@
 #include "crosslink/api/proto/packets/HandshakePackets.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/ClientToServerHandshakePacket.hpp>
-#include <sculk/protocol/codec/packet/ServerToClientHandshakePacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
@@ -24,13 +21,13 @@ void ServerToClientHandshakePacket::setToken(std::string token) {
 Result<> ServerToClientHandshakePacket::decodeImpl() {
     auto packet = bridge::decode<bp::ServerToClientHandshakePacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mToken = std::move(packet->mHandshakeWebToken);
+    mToken = std::move(packet->token);
     return {};
 }
 
 Result<> ServerToClientHandshakePacket::encodeImpl() {
     bp::ServerToClientHandshakePacket packet;
-    packet.mHandshakeWebToken = mToken;
+    packet.token = mToken;
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

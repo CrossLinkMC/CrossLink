@@ -298,6 +298,12 @@ Result<ConnectionPtr> BedrockTransport::connect(Endpoint const& endpoint, Connec
         return std::unexpected(Error{std::string{result.error().message()}});
     }
 
+    // A relay must survive world-load bursts: the library's client-side default of
+    // 2048 packets/s trips while a backend streams the initial chunks.
+    if (auto result = rawClient->setRawIngressLimits(8u * 1024u * 1024u, 65536); !result) {
+        return std::unexpected(Error{std::string{result.error().message()}});
+    }
+
     if (const auto status = rawClient->start(); status != bp::NetworkStartResult::Success) {
         return std::unexpected(Error{std::format("cannot start the backend stack for {} ({})", endpoint.toString(), startResultName(status))});
     }

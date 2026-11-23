@@ -1,19 +1,17 @@
 #include "crosslink/api/proto/packets/RespawnPacket.hpp"
 
-#include "proto/SculkBridge.hpp"
-
-#include <sculk/protocol/codec/packet/RespawnPacket.hpp>
+#include "proto/EndstoneBridge.hpp"
 
 namespace crosslink::proto {
 namespace {
 
 namespace bp = bridge::bp;
 
-bp::RespawnPacket::PlayerRespawnState toSculk(RespawnState state) noexcept {
-    return static_cast<bp::RespawnPacket::PlayerRespawnState>(static_cast<std::uint8_t>(state));
+bp::PlayerRespawnState toWire(RespawnState state) noexcept {
+    return static_cast<bp::PlayerRespawnState>(static_cast<std::uint8_t>(state));
 }
 
-RespawnState fromSculk(bp::RespawnPacket::PlayerRespawnState state) noexcept {
+RespawnState fromWire(bp::PlayerRespawnState state) noexcept {
     return static_cast<RespawnState>(static_cast<std::uint8_t>(state));
 }
 
@@ -46,17 +44,17 @@ void RespawnPacket::setRuntimeId(std::uint64_t runtimeId) {
 Result<> RespawnPacket::decodeImpl() {
     auto packet = bridge::decode<bp::RespawnPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
-    mState = fromSculk(packet->mState);
-    mPosition = bridge::fromSculk(packet->mPosition);
-    mRuntimeId = packet->mActorRuntimeId;
+    mState = fromWire(packet->state);
+    mPosition = bridge::fromWire(packet->pos);
+    mRuntimeId = packet->runtime_id;
     return {};
 }
 
 Result<> RespawnPacket::encodeImpl() {
     bp::RespawnPacket packet;
-    packet.mState = toSculk(mState);
-    packet.mPosition = bridge::toSculk(mPosition);
-    packet.mActorRuntimeId = mRuntimeId;
+    packet.state = toWire(mState);
+    packet.pos = bridge::toWire(mPosition);
+    packet.runtime_id = bp::ActorRuntimeID{mRuntimeId};
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));
     return {};
 }

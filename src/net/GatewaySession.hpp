@@ -101,7 +101,14 @@ private:
     void handleLoginOutbound(proto::Packet& packet, ServerId const& server);
     bool handleBackendNetworkSettings(ConnectionPtr const& backend, proto::Packet& packet);
     void emitClosed(std::string reason);
+    void flushPendingBackend();
     BackendLeg* legFor(ConnectionPtr const& connection);
+
+    /// Packets queued while the backend leg is still dialing. A client sends
+    /// RequestNetworkSettings and Login within milliseconds of connecting, long
+    /// before RakNet finishes the backend handshake, so dropping them would stall
+    /// the login before it starts.
+    static constexpr std::size_t maxPendingBackendPackets = 256;
 
     Gateway&                       mGateway;
     SessionId                      mId;
@@ -115,6 +122,7 @@ private:
     PlayerIdentity                 mIdentity;
     std::deque<Bytes>              mDeferredToClient;
     std::deque<Bytes>              mDeferredToBackend;
+    std::deque<Bytes>              mPendingBackend;
     std::size_t                    mMaxDeferred;
     std::map<std::string, std::shared_ptr<void>> mState;
     proto::crypto::KeyPair                mKeyPair;
@@ -122,6 +130,12 @@ private:
     bool                           mFrontendReady{};
     bool                           mFrontendEncrypted{};
     bool                           mClosed{};
+    /// Set once the backend answers anything after its handshake acknowledgement.
+    /// Until then an encrypted probe is only sent on the client's own ack.
+    /// The login window is where a relay silently breaks, so the first packets in
+    /// each direction are logged by id; after that the volume is not worth it.
+    std::uint32_t                  mLoggedClientPackets{};
+    std::uint32_t                  mLoggedBackendPackets{};
 };
 
 /// Owns the client listener and the set of live sessions.
