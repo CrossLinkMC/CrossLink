@@ -65,6 +65,32 @@ Accessor const* accessorFor(PacketId id) {
 
 } // namespace
 
+Result<std::optional<std::int64_t>> actorUniqueId(Packet const& packet) {
+    switch (packet.id()) {
+    case PacketId::AddActor:
+    case PacketId::AddItemActor:
+    case PacketId::RemoveActor: {
+        bp::BinaryReader reader{bridge::toStringView(packet.payload())};
+        const auto id = reader.readVarInt<std::int64_t>();
+        if (!id) return std::unexpected(Error{id.error().message()});
+        return std::optional{*id};
+    }
+    case PacketId::AddPlayer: {
+        auto player = bridge::decode<bp::AddPlayerPacket>(packet.payload());
+        if (!player) return std::unexpected(player.error());
+        return std::optional{static_cast<std::int64_t>(player->abilities_data.target_player)};
+    }
+    default:
+        return std::nullopt;
+    }
+}
+
+Bytes makeRemoveActorPacket(std::int64_t uniqueId) {
+    bp::RemoveActorPacket packet;
+    packet.entity_id = bp::ActorUniqueID{uniqueId};
+    return bridge::serialize(PacketHeader{PacketId::RemoveActor}, packet);
+}
+
 RuntimeIdPacket::RuntimeIdPacket(PacketHeader header, Bytes bytes, std::size_t headerSize)
 : Packet(header, std::move(bytes), headerSize) {}
 

@@ -1,7 +1,7 @@
 #include "app/Application.hpp"
 
 #include "crosslink/api/plugin/PluginManagerRegistry.hpp"
-#include "net/bedrock/BedrockTransport.hpp"
+#include "net/nethernet/NetherNetTransport.hpp"
 #include "proto/BuiltinCodecs.hpp"
 
 #include <format>
@@ -55,11 +55,11 @@ Result<> Application::registerTransports() {
     const std::string gameVersion = "unknown";
 #endif
 
-    // Additional transports (nethernet, ...) register themselves here or from a
-    // plugin; the configuration picks which one serves traffic.
+    // Minecraft mandates nethernet from 26.60 onwards. Further transports register
+    // themselves here or from a plugin; the configuration picks the active one.
     transports.registerTransport(
-        "bedrock-raknet",
-        std::make_shared<net::bedrock::BedrockTransport>(protocolVersion, gameVersion)
+        "bedrock-nethernet",
+        std::make_shared<net::nethernet::NetherNetTransport>(protocolVersion, gameVersion, config.nethernet)
     );
 
     if (!transports.setActive(config.transport)) {

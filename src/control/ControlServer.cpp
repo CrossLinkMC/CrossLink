@@ -252,6 +252,14 @@ void ControlServer::connectionLoop(SocketHandle socket, std::string remote) {
     ack.payload["gameVersion"] = std::string{mGateway.buildInfo().gameVersion};
     ack.payload["transport"] = std::string{mGateway.buildInfo().transport};
     ack.payload["heartbeatSeconds"] = mConfig.heartbeatSeconds;
+    // Everything this agent may transfer to. Its own server is excluded: a handoff
+    // to the server a player already occupies is never valid.
+    auto servers = Json::array();
+    for (auto const& info : net::ServerRegistry::instance().all()) {
+        if (info.id.str() == serverId) continue;
+        servers.push_back(info.id.str());
+    }
+    ack.payload["servers"] = std::move(servers);
     if (!channel->sendLine(ack.toJson())) {
         channel->close("cannot answer the hello");
         return;

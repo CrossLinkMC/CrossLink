@@ -9,6 +9,7 @@
 
 #include <format>
 #include <iterator>
+#include <optional>
 #include <utility>
 
 namespace crosslink::net {
@@ -20,11 +21,21 @@ proto::PacketId idOf(proto::Packet const& packet) noexcept { return packet.id();
 
 GatewaySession::GatewaySession(Gateway& gateway, SessionId id, ConnectionPtr client, std::size_t maxDeferredPackets)
 : mGateway(gateway), mId(std::move(id)), mClient(std::move(client)), mMaxDeferred(maxDeferredPackets) {
-    if (auto keyPair = proto::crypto::generateKeyPair()) {
-        mKeyPair = std::move(*keyPair);
-    } else {
-        gateway.logger().error("session {}: could not generate a gateway key pair: {}", mId.str(), keyPair.error().message);
+    // A transport that binds its wire identity to the login needs both signed with
+    // the same key, otherwise the backend sees two different identities for one
+    // player. Only fall back to a per-session pair when there is no such binding.
+    std::optional<proto::crypto::KeyPair> key;
+    if (const auto transport = TransportRegistry::instance().active()) {
+        key = transport->identityKeyPair();
     }
+    if (!key) {
+        if (auto generated = proto::crypto::generateKeyPair()) {
+            key = std::move(*generated);
+        } else {
+            gateway.logger().error("session {}: could not generate a gateway key pair: {}", mId.str(), generated.error().message);
+        }
+    }
+    if (key) mKeyPair = std::move(*key);
 }
 
 GatewaySession::~GatewaySession() = default;
@@ -101,6 +112,7 @@ GatewaySession::BackendLeg* GatewaySession::legFor(ConnectionPtr const& connecti
 }
 
 Result<ConnectionPtr> GatewaySession::openBackend(ServerId const& server, AttachOptions const& options) {
+    if (mClosed) return std::unexpected(Error{"the session is closed"});
     const auto info = ServerRegistry::instance().find(server);
     if (!info) return std::unexpected(Error{std::format("unknown server '{}'", server.str())});
 
@@ -138,7 +150,11 @@ Result<ConnectionPtr> GatewaySession::openBackend(ServerId const& server, Attach
     ConnectionPtr previous;
     {
         std::lock_guard lock{mMutex};
-        mBackends.push_back(BackendLeg{*connection, server, false, false});
+        if (mClosed) {
+            (*connection)->close();
+            return std::unexpected(Error{"the session closed while opening a backend"});
+        }
+        mBackends.push_back(BackendLeg{*connection, server, (*connection)->connected(), false});
         if (options.makeCurrent) {
             previous = mCurrent;
             mCurrent = *connection;
@@ -266,9 +282,22 @@ Result<> GatewaySession::sendToClient(ByteSpan packet, bool immediate) {
     ConnectionPtr client;
     {
         std::lock_guard lock{mMutex};
+        if (mClosed) return std::unexpected(Error{"the session is closed"});
         client = mClient;
     }
     if (!client || !client->connected()) return std::unexpected(Error{"the client is not connected"});
+    const auto header = proto::readPacketHeader(packet);
+    if (header && (header->id == proto::PacketId::SetPlayerGameType
+                   || header->id == proto::PacketId::SetPlayerInventoryOptions
+                   || header->id == proto::PacketId::UpdateAbilities
+                   || header->id == proto::PacketId::UpdateAdventureSettings)) {
+        std::string hex;
+        for (const auto byte : packet) hex += std::format("{:02x}", static_cast<unsigned char>(byte));
+        mGateway.logger().debug(
+            "session {}: frontend state packet {} subclients {}->{} [{}]",
+            mId.str(), proto::packetIdValue(header->id), header->senderSubClientId, header->targetSubClientId, hex
+        );
+    }
     return client->send(packet, immediate);
 }
 
@@ -276,6 +305,7 @@ Result<> GatewaySession::sendToBackend(ByteSpan packet, bool immediate) {
     ConnectionPtr backend;
     {
         std::lock_guard lock{mMutex};
+        if (mClosed) return std::unexpected(Error{"the session is closed"});
         backend = mCurrent;
     }
     if (!backend || !backend->connected()) {
@@ -390,22 +420,28 @@ Result<> GatewaySession::terminateBackendHandshake(
         frontendKey = std::move(*derived);
     }
 
-    // The client handshake has to go out in the pre-encryption framing, so it is
-    // sent immediately and only then does the client leg switch to encryption.
+    // Both handshake acknowledgements travel in the clear: a Bedrock peer enables
+    // encryption only after it has sent its own ClientToServerHandshake. So the
+    // client leg waits for that ack, and the backend leg is switched after ours.
     if (issueFrontendHandshake) {
         proto::ServerToClientHandshakePacket handshake{proto::PacketHeader{proto::PacketId::ServerToClientHandshake}};
         handshake.setToken(frontendToken.raw);
         if (auto sent = sendToClient(handshake, true); !sent) return sent;
-        if (auto encrypted = mClient->setEncryption(std::move(frontendKey)); !encrypted) return encrypted;
-        mFrontendEncrypted = true;
+        std::lock_guard lock{mMutex};
+        mPendingFrontendKey = std::move(frontendKey);
     }
-
-    if (auto encrypted = backend->setEncryption(std::move(*backendKey)); !encrypted) return encrypted;
 
     proto::ClientToServerHandshakePacket acknowledgement{
         proto::PacketHeader{proto::PacketId::ClientToServerHandshake}
     };
     if (auto encoded = acknowledgement.encode(); !encoded) return encoded;
+    auto acked = backend->send(ByteSpan{acknowledgement.bytes()}, true);
+    if (!acked) {
+        mGateway.logger().error("session {}: the backend refused the handshake acknowledgement: {}", mId.str(), acked.error().message);
+        return acked;
+    }
+    if (auto encrypted = backend->setEncryption(std::move(*backendKey)); !encrypted) return encrypted;
+
     mGateway.logger().info(
         "session {}: terminated the backend encryption handshake (backend key {}, gateway key {}, ack {} bytes){}",
         mId.str(),
@@ -414,11 +450,7 @@ Result<> GatewaySession::terminateBackendHandshake(
         acknowledgement.bytes().size(),
         issueFrontendHandshake ? " and issued the client handshake" : ""
     );
-    auto acked = backend->send(ByteSpan{acknowledgement.bytes()}, true);
-    if (!acked) {
-        mGateway.logger().error("session {}: the backend refused the handshake acknowledgement: {}", mId.str(), acked.error().message);
-    }
-    return acked;
+    return {};
 }
 
 // ---- routing -----------------------------------------------------------
@@ -441,10 +473,26 @@ void GatewaySession::handleClientPacket(Bytes& raw) {
     case proto::PacketId::Login:
         handleLoginOutbound(packet, currentServer());
         break;
-    case proto::PacketId::ClientToServerHandshake:
-        // The client leg terminated its handshake with the gateway, not with a
-        // backend; there is nothing to forward.
+    case proto::PacketId::ClientToServerHandshake: {
+        // The client's ack is the last plaintext packet it sends; this leg
+        // encrypts from the next one. Nothing here is forwarded to a backend.
+        std::optional<Bytes> key;
+        {
+            std::lock_guard lock{mMutex};
+            key.swap(mPendingFrontendKey);
+        }
+        if (key) {
+            if (auto encrypted = mClient->setEncryption(std::move(*key)); !encrypted) {
+                mGateway.logger().error("session {}: cannot enable client encryption: {}", mId.str(), encrypted.error().message);
+                disconnectClient("encryption handshake failed");
+            } else {
+                std::lock_guard lock{mMutex};
+                mFrontendEncrypted = true;
+                mGateway.logger().info("session {}: client encryption enabled after its handshake ack", mId.str());
+            }
+        }
         return;
+    }
     default:
         break;
     }
@@ -525,6 +573,23 @@ void GatewaySession::handleBackendPacket(ConnectionPtr const& backend, ServerId 
             packet.name(),
             packet.bytes().size()
         );
+    }
+
+    // Always surface a backend's disconnect reason: it is the one packet that
+    // explains a failed login or handoff, and the per-session log budget is long
+    // spent by the time a handoff runs.
+    if (idOf(packet) == proto::PacketId::Disconnect) {
+        if (auto* disconnect = proto::asOrNull<proto::DisconnectPacket>(packet)) {
+            if (auto decoded = disconnect->decode(); decoded) {
+                mGateway.logger().warn(
+                    "session {}: '{}' sent Disconnect reason {} ({})",
+                    mId.str(),
+                    server.str(),
+                    disconnect->reason(),
+                    disconnect->skipMessage() ? "no message" : disconnect->message()
+                );
+            }
+        }
     }
 
     const bool currentBackend = [&] {
@@ -624,13 +689,17 @@ void GatewaySession::routePacket(
         // Only the current backend may drive the client; a prewarming leg stays
         // silent unless a plugin explicitly sent something itself.
         if (!currentBackend) return;
-        if (auto sent = sendToClient(*packet, false); !sent) {
-            mGateway.logger().debug(
-                "session {}: cannot forward {} to the client: {}",
-                mId.str(),
-                packet->name(),
-                sent.error().message
-            );
+        {
+            std::lock_guard lock{mMutex};
+            if (!mCurrent || mCurrentServer != server) return;
+            if (auto sent = sendToClient(*packet, false); !sent) {
+                mGateway.logger().debug(
+                    "session {}: cannot forward {} to the client: {}",
+                    mId.str(),
+                    packet->name(),
+                    sent.error().message
+                );
+            }
         }
         return;
     }
@@ -709,10 +778,10 @@ void GatewaySession::handleClientClosed(std::string reason) {
 void GatewaySession::emitClosed(std::string reason) {
     {
         std::lock_guard lock{mMutex};
-        if (mClosed) return;
-        mClosed = true;
+        if (mClosed.exchange(true)) return;
     }
 
+    SessionRegistry::instance().untrack(mId);
     std::vector<BackendLeg> legs;
     {
         std::lock_guard lock{mMutex};
@@ -722,6 +791,7 @@ void GatewaySession::emitClosed(std::string reason) {
         mDeferredToClient.clear();
         mDeferredToBackend.clear();
         mPendingBackend.clear();
+        mPendingFrontendKey.reset();
     }
     mPipeline.clear();
     for (auto& leg : legs) {
@@ -780,17 +850,16 @@ Result<> SessionRouter::start() {
 
 void SessionRouter::stop() noexcept {
     std::vector<std::shared_ptr<GatewaySession>> sessions;
+    std::unique_ptr<InboundListener> listener;
     {
         std::lock_guard lock{mMutex};
-        if (mListener) {
-            mListener->stop();
-            mListener.reset();
-        }
+        listener = std::move(mListener);
         sessions.reserve(mSessions.size());
         for (auto& [key, session] : mSessions) sessions.push_back(session);
         mSessions.clear();
     }
     for (auto& session : sessions) session->handleClientClosed("gateway shutting down");
+    if (listener) listener->stop();
 }
 
 std::size_t SessionRouter::sessionCount() const noexcept {
@@ -804,7 +873,7 @@ void SessionRouter::onClientConnected(ConnectionPtr const& client) {
         std::lock_guard lock{mMutex};
         const auto id = SessionId{std::format("s{}", mNextId++)};
         session = std::make_shared<GatewaySession>(mGateway, id, client, mGateway.config().network.maxDeferredPackets);
-        mSessions.emplace(client->remote().toString(), session);
+        mSessions.emplace(client, session);
     }
 
     SessionRegistry::instance().track(session);
@@ -829,7 +898,7 @@ void SessionRouter::onClientPacket(ConnectionPtr const& client, Bytes& packet) {
     std::shared_ptr<GatewaySession> session;
     {
         std::lock_guard lock{mMutex};
-        const auto found = mSessions.find(client->remote().toString());
+        const auto found = mSessions.find(client);
         if (found != mSessions.end()) session = found->second;
     }
     if (session) session->handleClientPacket(packet);
@@ -839,8 +908,7 @@ void SessionRouter::onClientDisconnected(ConnectionPtr const& client) {
     std::shared_ptr<GatewaySession> session;
     {
         std::lock_guard lock{mMutex};
-        const auto key = client->remote().toString();
-        if (const auto found = mSessions.find(key); found != mSessions.end()) {
+        if (const auto found = mSessions.find(client); found != mSessions.end()) {
             session = found->second;
             mSessions.erase(found);
         }

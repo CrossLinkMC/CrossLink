@@ -129,12 +129,23 @@ std::int32_t SetPlayerInventoryOptionsPacket::layout() const { return mLayout; }
 
 std::int32_t SetPlayerInventoryOptionsPacket::craftLayout() const { return mCraftLayout; }
 
+bool SetPlayerInventoryOptionsPacket::filtering() const { return mFiltering; }
+
+void SetPlayerInventoryOptionsPacket::setGameType(GameType gameType) {
+    if (gameType != GameType::Survival && gameType != GameType::Adventure && gameType != GameType::Creative) return;
+    const auto tab = leftTabFor(gameType);
+    if (mLeftTab == tab) return;
+    mLeftTab = tab;
+    markDirty();
+}
+
 Result<> SetPlayerInventoryOptionsPacket::decodeImpl() {
     auto packet = bridge::decode<bp::SetPlayerInventoryOptionsPacket>(payload());
     if (!packet) return std::unexpected(packet.error());
     auto const& options = packet->inventory_options;
     mLeftTab = enumToInt(options.left_inventory_tab);
     mRightTab = enumToInt(options.right_inventory_tab);
+    mFiltering = options.filtering;
     mLayout = enumToInt(options.layout_inv);
     mCraftLayout = enumToInt(options.layout_craft);
     return {};
@@ -144,6 +155,7 @@ Result<> SetPlayerInventoryOptionsPacket::encodeImpl() {
     bp::SetPlayerInventoryOptionsPacket packet;
     packet.inventory_options.left_inventory_tab = intToEnum<bp::InventoryLeftTabIndex>(mLeftTab);
     packet.inventory_options.right_inventory_tab = intToEnum<bp::InventoryRightTabIndex>(mRightTab);
+    packet.inventory_options.filtering = mFiltering;
     packet.inventory_options.layout_inv = intToEnum<bp::InventoryLayout>(mLayout);
     packet.inventory_options.layout_craft = intToEnum<bp::InventoryLayout>(mCraftLayout);
     setSerialized(bridge::serialize(header(), packet), bridge::serializedHeaderSize(header()));

@@ -30,6 +30,28 @@ struct NetworkConfig {
     std::size_t   maxDeferredPackets{4096};
 };
 
+/// NetherNet specifics. Minecraft mandates this transport from 26.60 onwards.
+struct NetherNetConfig {
+    /// The operator key SDP identity assertions are signed with. Created on first
+    /// start; deleting it changes the identity clients and backends have seen.
+    std::string identityKeyFile{"config/nethernet-identity.pem"};
+    /// Optional TLS for the signalling port. Empty serves plain HTTP and refuses
+    /// TLS with an alert, which is what makes a client fall back immediately.
+    std::string tlsCertificate;
+    std::string tlsPrivateKey;
+    /// Interface the ICE sockets bind to; empty binds every interface.
+    std::string iceBindAddress;
+    std::uint16_t icePortBegin{1024};
+    std::uint16_t icePortEnd{65535};
+    /// STUN/TURN URLs, needed only when the gateway sits behind a NAT.
+    std::vector<std::string> iceServers;
+    std::string levelName{"Bedrock level"};
+    std::int32_t gameType{0};
+    /// Bytes one outbound fragment may carry. Kept well below the advertised
+    /// 262144 so a single loss cannot stall a whole large packet.
+    std::size_t maxSegmentBytes{10000};
+};
+
 /// Control plane the backend agents connect to. Never expose this publicly.
 struct ControlConfig {
     std::string   listenHost{"127.0.0.1"};
@@ -58,6 +80,7 @@ struct GatewayConfig {
     int version{1};
 
     NetworkConfig           network;
+    NetherNetConfig         nethernet;
     ControlConfig           control;
     /// The lobby: the hub every sub server is reachable from.
     std::string             lobby;
@@ -69,7 +92,7 @@ struct GatewayConfig {
     std::string logLevel{"info"};
     std::string logFile;
     /// Transport implementation to use; see net::TransportRegistry.
-    std::string transport{"bedrock-raknet"};
+    std::string transport{"bedrock-nethernet"};
 
     [[nodiscard]] Result<>                      validate() const;
     [[nodiscard]] std::string                   entryServerOrLobby() const;

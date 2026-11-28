@@ -28,7 +28,7 @@ struct BuildInfo {
     std::uint32_t    pluginApiVersion{};
     std::uint32_t    protocolVersion{};
     std::string_view gameVersion;
-    /// Name of the active transport, e.g. "bedrock-raknet".
+    /// Name of the active transport, e.g. "bedrock-nethernet".
     std::string      transport;
 };
 

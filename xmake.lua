@@ -29,46 +29,16 @@ option("game_version")
     set_description("Bedrock game version advertised in the MOTD")
 option_end()
 
--- Third-party dependencies. The git-only ones are fetched by xmake/deps.lua at
--- pinned commits into .deps/ (no submodules); the rest come from xrepo.
 add_requires("nlohmann_json v3.12.0")
 add_requires("fmt")
 add_requires("magic_enum v0.9.7")
-add_requires("boost_pfr 2.2.0")
-add_requires("concurrentqueue v1.0.4")
-add_requires("parallel-hashmap v2.0.0")
-add_requires("cpp-httplib v0.46.0", {configs = {ssl = true, zlib = false, brotli = false, zstd = false}})
 add_requires("openssl3", {configs = {shared = false}})
 add_requires("zlib", {configs = {shared = false}})
 add_requires("snappy", {configs = {shared = false}})
-
---- NOTE: dependency fetching happens inside target on_load hooks. xmake's
--- sandbox only exposes `import` there, and a closure created in the root scope
--- would keep the root environment (where `import` is nil).
-
--- Vendored dependency targets are third-party code: no warnings, C++23, no RTTI,
--- matching how BedrockProtocol's own CMake builds them.
-target("raknet")
-    set_kind("static")
-    set_group("deps")
-    set_languages("c++23")
-    set_warnings(nil)
-    add_defines("RAKNET_SUPPORT_IPV6=1", "NOMINMAX", {public = true})
-    if is_plat("windows") then
-        add_defines("UNICODE", "_WIN32_WINNT=0x0A00")
-        add_cxflags("/utf-8", "/GR-", "/bigobj", {force = true})
-        add_syslinks("ws2_32", "winmm")
-    else
-        add_cxflags("-fno-rtti", {force = true})
-        add_syslinks("pthread")
-    end
-    on_load(function (target)
-        local deps = import("deps", {rootdir = path.join(os.projectdir(), "xmake")})
-        local root = path.join(deps.ensure(os.projectdir()), "RakNet")
-        target:add("files", path.join(root, "Source/*.cpp"))
-        target:add("sysincludedirs", path.join(root, "Source"), {public = true})
-    end)
-target_end()
+-- NetherNet is WebRTC. libdatachannel carries ICE/DTLS/SCTP/DCEP; the
+-- NetherNet-specific signalling, SDP and framing live in src/net/nethernet.
+-- media=false builds the data-channel-only library, which is all Bedrock uses.
+add_requires("libdatachannel v0.24.6", {configs = {shared = false, media = false, websocket = false}})
 
 -- Bedrock packet codecs. Vendored as pre-generated C++ (third_party/bedrock-protocol/
 -- VENDOR.md), so unlike a checkout of the upstream repo this needs no Python at build
@@ -86,54 +56,6 @@ target("bedrock_codec")
     add_files("third_party/bedrock-protocol/generated/include/bedrock/protocol/*.cpp")
 target_end()
 
-target("bedrock_protocol")
-    set_kind("static")
-    set_group("deps")
-    set_languages("c++23")
-    set_warnings(nil)
-    add_deps("raknet")
-    add_packages(
-        "openssl3",
-        "zlib",
-        "snappy",
-        "cpp-httplib",
-        "magic_enum",
-        "boost_pfr",
-        "fmt",
-        "concurrentqueue",
-        "parallel-hashmap",
-        {public = true}
-    )
-    add_defines(
-        "SCULK_PROTOCOL_ENABLE_CONNECTION",
-        "CPPHTTPLIB_OPENSSL_SUPPORT",
-        "CPPHTTPLIB_NO_EXCEPTIONS",
-        "JSONC_NO_EXCEPTION",
-        "NOMINMAX",
-        {public = true}
-    )
-    -- PROTOCOL_ENABLE_DETAIL_ERRORS / PROTOCOL_ENABLE_FORMATTING change ErrorInfo's
-    -- layout and IPacket's vtable. Both stay OFF so the library and every consumer
-    -- translation unit agree on the ABI.
-    if is_plat("windows") then
-        add_defines("UNICODE", "_WIN32_WINNT=0x0A00")
-        add_cxflags("/utf-8", "/GR-", "/Zc:preprocessor", "/permissive-", "/bigobj", {force = true})
-    else
-        add_cxflags("-fno-rtti", {force = true})
-    end
-    on_load(function (target)
-        local deps = import("deps", {rootdir = path.join(os.projectdir(), "xmake")})
-        local root = deps.ensure(os.projectdir())
-        local protocol = path.join(root, "BedrockProtocol")
-        target:add("files", path.join(protocol, "src/sculk/protocol/codec/**.cpp"))
-        target:add("files", path.join(protocol, "src/sculk/protocol/auth/*.cpp"))
-        target:add("files", path.join(protocol, "src/sculk/protocol/connection/**.cpp"))
-        target:add("sysincludedirs", path.join(protocol, "include"), {public = true})
-        target:add("sysincludedirs", path.join(root, "Reflection/include"), {public = true})
-        target:add("sysincludedirs", path.join(root, "JSONC/include"), {public = true})
-    end)
-target_end()
-
 --- Common settings for first-party CrossLink code.
 local function crosslink_target(target)
     target:set("languages", "c++latest")
@@ -141,7 +63,7 @@ local function crosslink_target(target)
         target:add("defines", "NOMINMAX", "UNICODE", "_WIN32_WINNT=0x0A00")
         target:add("cxflags", "/utf-8", "/Zc:preprocessor", "/bigobj", "/permissive-")
         target:set("runtimes", "MD")
-        target:add("syslinks", "ws2_32", "crypt32")
+        target:add("syslinks", "ws2_32", "crypt32", "iphlpapi")
     else
         target:add("syslinks", "pthread")
     end
@@ -157,8 +79,8 @@ target("crosslink_core")
     add_includedirs("include", {public = true})
     add_includedirs("src")
     add_headerfiles("include/(crosslink/**.hpp)")
-    add_deps("bedrock_codec", "bedrock_protocol")
-    add_packages("nlohmann_json", "fmt", "magic_enum")
+    add_deps("bedrock_codec")
+    add_packages("nlohmann_json", "fmt", "magic_enum", "openssl3", "zlib", "snappy", "libdatachannel")
     add_defines("CROSSLINK_BUILDING_CORE=1")
     on_load(function (target)
         crosslink_target(target)

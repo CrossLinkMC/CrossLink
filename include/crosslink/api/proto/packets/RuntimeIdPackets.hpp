@@ -3,10 +3,14 @@
 #include "crosslink/api/proto/TypedPacket.hpp"
 
 #include <cstdint>
+#include <optional>
 #include <string_view>
 #include <vector>
 
 namespace crosslink::proto {
+
+[[nodiscard]] CROSSLINK_API Result<std::optional<std::int64_t>> actorUniqueId(Packet const& packet);
+[[nodiscard]] CROSSLINK_API Bytes makeRemoveActorPacket(std::int64_t uniqueId);
 
 /// Every packet that names the local player by runtime id.
 ///

@@ -72,7 +72,10 @@ void Gateway::configure(config::GatewayConfig config) {
     mImpl->config = std::move(config);
     LoggerRegistry::instance().setLevel(parseLogLevel(mImpl->config.logLevel, LogLevel::Info));
     if (!mImpl->config.logFile.empty()) {
-        if (!LoggerRegistry::instance().setLogFile(mImpl->config.logFile)) {
+        // Mirror the configured level, not just info: the login and handoff windows
+        // are only diagnosable from the debug lines.
+        const auto level = parseLogLevel(mImpl->config.logLevel, LogLevel::Info);
+        if (!LoggerRegistry::instance().setLogFile(mImpl->config.logFile, level)) {
             logger().warn("cannot write the log file '{}', logging to the console only", mImpl->config.logFile);
         }
     }

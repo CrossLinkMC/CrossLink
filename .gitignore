@@ -1,6 +1,9 @@
 build/
-.deps/
 .xmake/
 bin/
 compile_commands.json
 plugins/
+
+# Local secrets: the control token and the NetherNet identity private key.
+config/crosslink.json
+config/nethernet-identity.pem

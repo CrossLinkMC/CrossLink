@@ -67,7 +67,10 @@ inline void writeHeader(Bytes& out, PacketHeader const& header) {
         (packetIdValue(header.id) & 0x3FF) | ((header.senderSubClientId & 3) << 10)
         | ((header.targetSubClientId & 3) << 12)
     );
-    out.insert(out.end(), toBytes(buffer).begin(), toBytes(buffer).end());
+    // One named buffer: taking begin() and end() from two separate temporaries
+    // would measure the distance across unrelated allocations.
+    const auto bytes = toBytes(buffer);
+    out.insert(out.end(), bytes.begin(), bytes.end());
 }
 
 [[nodiscard]] inline std::size_t serializedHeaderSize(PacketHeader const& header) {

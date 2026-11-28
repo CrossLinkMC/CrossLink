@@ -105,9 +105,9 @@ Result<Json> AgentChannelImpl::sendRequest(
         return std::unexpected(Error{std::format("cannot reach agent '{}'", mServer.str())});
     }
 
-    // An async caller gets its answer from handleInbound() or from the watchdog
-    // expiring the entry; only a blocking caller waits here.
-    if (!pending->handler) return pending->result;
+    // An async caller has a handler and gets its answer from handleInbound() or
+    // from the watchdog expiring the entry; only a blocking caller waits here.
+    if (pending->handler) return Json::object();
 
     std::unique_lock lock{pending->mutex};
     if (pending->condition.wait_for(lock, timeout, [&pending] { return pending->done; })) return pending->result;

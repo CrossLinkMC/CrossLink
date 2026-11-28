@@ -3,11 +3,13 @@
 #include "crosslink/api/Export.hpp"
 #include "crosslink/api/Result.hpp"
 #include "crosslink/api/Types.hpp"
+#include "crosslink/api/proto/Crypto.hpp"
 #include "crosslink/api/proto/PacketId.hpp"
 
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -28,6 +30,9 @@ struct ProtocolInfo {
     std::string   gameVersion;
     bool          supportsEncryption{};
     bool          supportsCompression{};
+    /// True when the transport already encrypts the wire, so Bedrock's own
+    /// encryption handshake must not run on top of it. NetherNet's DTLS is this.
+    bool          transportEncrypted{};
     /// True when the gateway can terminate a session on both legs, which is what
     /// makes a seamless backend switch possible at all.
     bool          supportsTermination{};
@@ -94,11 +99,9 @@ protected:
 
 /// A network stack.
 ///
-/// CrossLink ships `bedrock-raknet` on top of the BedrockProtocol library.
-/// Minecraft forces the nethernet stack from 26.60 onwards; that will arrive as
-/// a second implementation of this interface. Nothing above this line — routing,
-/// sessions, the plugin API, or any plugin — may assume RakNet or Bedrock
-/// framing.
+/// CrossLink ships `bedrock-nethernet`, which Minecraft mandates from 26.60
+/// onwards. Nothing above this line — routing, sessions, the plugin API, or any
+/// plugin — may assume a particular transport or framing.
 class CROSSLINK_API Transport {
 public:
     Transport(Transport const&)            = delete;
@@ -114,6 +117,13 @@ public:
 
     /// Opens an outbound connection. Asynchronous: `onConnected` reports success.
     [[nodiscard]] virtual Result<ConnectionPtr> connect(Endpoint const& endpoint, ConnectionHooks hooks) = 0;
+
+    /// The key this transport signs its wire identity with, when it has one.
+    /// A transport that binds its wire identity to the login (NetherNet does,
+    /// because DTLS replaces Bedrock's encryption handshake) must have its logins
+    /// re-signed with this same key, or the peer sees two different identities.
+    /// nullopt means there is no such binding and a per-session key is fine.
+    [[nodiscard]] virtual std::optional<proto::crypto::KeyPair> identityKeyPair() const { return std::nullopt; }
 
 protected:
     Transport() = default;

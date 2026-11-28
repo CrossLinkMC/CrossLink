@@ -90,6 +90,8 @@ public:
     [[nodiscard]] std::int32_t rightTab() const;
     [[nodiscard]] std::int32_t layout() const;
     [[nodiscard]] std::int32_t craftLayout() const;
+    [[nodiscard]] bool filtering() const;
+    void setGameType(GameType gameType);
 
 protected:
     Result<> decodeImpl() override;
@@ -100,6 +102,7 @@ private:
     std::int32_t mRightTab{};
     std::int32_t mLayout{};
     std::int32_t mCraftLayout{};
+    bool mFiltering{};
 };
 
 } // namespace crosslink::proto

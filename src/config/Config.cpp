@@ -47,6 +47,27 @@ NetworkConfig readNetwork(Json const& json) {
     return config;
 }
 
+NetherNetConfig readNetherNet(Json const& json) {
+    Json scratch;
+    auto const& nethernet = section(json, "nethernet", scratch);
+    NetherNetConfig config;
+    config.identityKeyFile = read<std::string>(nethernet, "identityKeyFile", config.identityKeyFile);
+    config.tlsCertificate = read<std::string>(nethernet, "tlsCertificate", config.tlsCertificate);
+    config.tlsPrivateKey = read<std::string>(nethernet, "tlsPrivateKey", config.tlsPrivateKey);
+    config.iceBindAddress = read<std::string>(nethernet, "iceBindAddress", config.iceBindAddress);
+    config.icePortBegin = read<std::uint16_t>(nethernet, "icePortBegin", config.icePortBegin);
+    config.icePortEnd = read<std::uint16_t>(nethernet, "icePortEnd", config.icePortEnd);
+    config.levelName = read<std::string>(nethernet, "levelName", config.levelName);
+    config.gameType = read<std::int32_t>(nethernet, "gameType", config.gameType);
+    config.maxSegmentBytes = read<std::size_t>(nethernet, "maxSegmentBytes", config.maxSegmentBytes);
+    if (const auto found = nethernet.find("iceServers"); found != nethernet.end() && found->is_array()) {
+        for (auto const& server : *found) {
+            if (server.is_string()) config.iceServers.push_back(server.get<std::string>());
+        }
+    }
+    return config;
+}
+
 ControlConfig readControl(Json const& json) {
     Json scratch;
     auto const& control = section(json, "control", scratch);
@@ -120,6 +141,7 @@ Result<GatewayConfig> fromJson(Json const& json) {
     GatewayConfig config;
     config.version = read<int>(json, "version", config.version);
     config.network = readNetwork(json);
+    config.nethernet = readNetherNet(json);
     config.control = readControl(json);
     config.lobby = read<std::string>(json, "lobby", config.lobby);
     config.entryServer = read<std::string>(json, "entryServer", config.entryServer);
@@ -162,6 +184,19 @@ Json toJson(GatewayConfig const& config) {
     network["flushReadyPerTick"] = config.network.flushReadyPerTick;
     network["maxDeferredPackets"] = config.network.maxDeferredPackets;
     json["network"] = std::move(network);
+
+    auto nethernet = Json::object();
+    nethernet["identityKeyFile"] = config.nethernet.identityKeyFile;
+    nethernet["tlsCertificate"] = config.nethernet.tlsCertificate;
+    nethernet["tlsPrivateKey"] = config.nethernet.tlsPrivateKey;
+    nethernet["iceBindAddress"] = config.nethernet.iceBindAddress;
+    nethernet["icePortBegin"] = config.nethernet.icePortBegin;
+    nethernet["icePortEnd"] = config.nethernet.icePortEnd;
+    nethernet["iceServers"] = config.nethernet.iceServers;
+    nethernet["levelName"] = config.nethernet.levelName;
+    nethernet["gameType"] = config.nethernet.gameType;
+    nethernet["maxSegmentBytes"] = config.nethernet.maxSegmentBytes;
+    json["nethernet"] = std::move(nethernet);
 
     auto control = Json::object();
     control["listenHost"] = config.control.listenHost;

@@ -11,6 +11,18 @@
         "flushReadyPerTick": 512,
         "maxDeferredPackets": 4096
     },
+    "nethernet": {
+        "identityKeyFile": "config/nethernet-identity.pem",
+        "tlsCertificate": "",
+        "tlsPrivateKey": "",
+        "iceBindAddress": "",
+        "icePortBegin": 1024,
+        "icePortEnd": 65535,
+        "iceServers": [],
+        "levelName": "Bedrock level",
+        "gameType": 0,
+        "maxSegmentBytes": 10000
+    },
     "control": {
         "listenHost": "127.0.0.1",
         "listenPort": 31920,
@@ -41,5 +53,5 @@
     "pluginDir": "plugins",
     "logLevel": "info",
     "logFile": "",
-    "transport": "bedrock-raknet"
+    "transport": "bedrock-nethernet"
 }

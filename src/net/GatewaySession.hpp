@@ -2,11 +2,13 @@
 
 #include "crosslink/api/net/Session.hpp"
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -127,9 +129,12 @@ private:
     std::map<std::string, std::shared_ptr<void>> mState;
     proto::crypto::KeyPair                mKeyPair;
     std::string                    mClientPublicKey;
+    /// Held between issuing ServerToClientHandshake and the client's ack: a
+    /// Bedrock peer sends that ack in the clear and encrypts only afterwards.
+    std::optional<Bytes>           mPendingFrontendKey;
     bool                           mFrontendReady{};
     bool                           mFrontendEncrypted{};
-    bool                           mClosed{};
+    std::atomic_bool               mClosed{};
     /// Set once the backend answers anything after its handshake acknowledgement.
     /// Until then an encrypted probe is only sent on the client's own ack.
     /// The login window is where a relay silently breaks, so the first packets in
@@ -157,7 +162,7 @@ private:
     Gateway&                                        mGateway;
     std::unique_ptr<InboundListener>                mListener;
     mutable std::recursive_mutex                    mMutex;
-    std::map<std::string, std::shared_ptr<GatewaySession>> mSessions;
+    std::map<ConnectionPtr, std::shared_ptr<GatewaySession>, std::owner_less<ConnectionPtr>> mSessions;
     std::uint64_t                                   mNextId{1};
 };
 
